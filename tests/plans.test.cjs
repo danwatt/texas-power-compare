@@ -33,9 +33,9 @@ test('shared comparison preserves monthly bills and includes no meter IDs or int
 });
 test('shared data refuses plans that require sub-hour energy boundaries and rejects malformed links',()=>{
   const data=P.aggregate([row(0,1)],'123',['2025-01']);assert.throws(()=>P.shareEncode(data,[{...plan,free:true,start:'21:15',end:'07:00'}]),/whole-hour/);assert.throws(()=>P.shareDecode('oops!'));assert.throws(()=>P.shareDecode('a'.repeat(100001)));});
-test('binary shares are compact with bounded 0.01 kWh hourly rounding',()=>{
+test('binary shares are compact with adaptive hourly rounding under a 2% bill bound',()=>{
   const records=D.demo(),keys=P.period('2025-12-31','2025'),p={...plan,free:true,discount:'weekly',startDay:5,endDay:0,weekStart:'19:00',weekEnd:'23:00'},data=P.aggregate(records,records[0].meter,keys),encoded=P.shareEncode(data,[p]),shared=P.shareDecode(encoded);
-  assert.ok(encoded.length<8000,`Expected <8 KB link; got ${encoded.length} bytes`);assert.equal(shared.data.months.length,12);for(let i=0;i<12;i++)assert.ok(Math.abs(shared.data.months[i].kwh-data.months[i].kwh)<=.005);assert.ok(Math.abs(P.compareData(shared.data,p).total-P.compareData(data,p).total)<=25);
+  assert.ok(encoded.length<5000,`Expected <5 KB link; got ${encoded.length} bytes`);assert.equal(shared.data.months.length,12);assert.equal(shared.compact,true);assert.ok(shared.resolution>=.01);for(let i=0;i<12;i++)assert.ok(Math.abs(shared.data.months[i].kwh-data.months[i].kwh)<=.005);const before=P.compareData(data,p),after=P.compareData(shared.data,p);for(let i=0;i<12;i++)assert.ok(Math.abs(after.months[i].bill-before.months[i].bill)/before.months[i].bill<=.02);assert.ok(Math.abs(after.total-before.total)<=25);
 });
 test('legacy JSON shared links remain readable',()=>{
   const data=P.aggregate([row(0,1)],'123',['2025-01']),payload={v:1,m:data.months.map(m=>[m.key,Math.round(m.kwh*1000),m.count,m.estimated,m.hours.map(v=>Math.round(v*1000))]),p:[plan]},legacy=btoa(JSON.stringify(payload)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');assert.equal(P.shareDecode(legacy).data.months[0].kwh,1);

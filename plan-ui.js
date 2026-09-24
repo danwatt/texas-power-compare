@@ -72,8 +72,8 @@
       const relevant=records.filter(r=>r.meter===meter),last=relevant.length?relevant.at(-1).day:null;
       const keys=sharedData?sharedData.months.map(m=>m.key):last?PowerPlans.period(last,$('plan-period').value):[];
       if(!keys.length)throw new Error('Import usage before creating a share link.');
-      const data=sharedData||PowerPlans.aggregate(records,meter,keys),payload=PowerPlans.shareEncode(data,plans);
-      const url=location.href.split('#')[0]+'#compare='+payload;$('share-link').value=url;$('share-size').textContent=`${(url.length/1024).toFixed(1)} KB link · contains ${data.months.length} months of anonymous comparison data and ${plans.length} plan${plans.length===1?'':'s'}.`;$('share-error').textContent='';$('share-dialog').showModal();
+      const data=sharedData||PowerPlans.aggregate(records,meter,keys),payload=PowerPlans.shareEncode(data,plans),shared=PowerPlans.shareDecode(payload);
+      const url=location.href.split('#')[0]+'#compare='+payload;$('share-link').value=url;$('share-size').textContent=`${(url.length/1024).toFixed(1)} KB link · ${shared.compact?`hourly buckets rounded to ${shared.resolution.toFixed(2)} kWh`:'.01 kWh hourly precision'} · ${plans.length?`included monthly bills stay within 2% of this browser’s calculation.`:'no included plans to compare.'}`;$('share-error').textContent='';$('share-dialog').showModal();
     }catch(error){$('plan-status').textContent=error.message;}
   }
   async function copyShare(){try{await navigator.clipboard.writeText($('share-link').value);$('share-error').textContent='Link copied.';}catch{$('share-link').select();$('share-error').textContent='Select and copy the link above.';}}

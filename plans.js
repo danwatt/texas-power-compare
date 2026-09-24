@@ -79,9 +79,19 @@
   function put32(bytes,value){if(!Number.isSafeInteger(value)||value<0||value>4294967295)throw new Error('This comparison is too large to share.');bytes.push(value>>>24,(value>>>16)&255,(value>>>8)&255,value&255);}
   function get16(bytes,cursor){if(cursor.at+2>bytes.length)throw new Error('Invalid shared comparison link.');return bytes[cursor.at++]*256+bytes[cursor.at++];}
   function get32(bytes,cursor){if(cursor.at+4>bytes.length)throw new Error('Invalid shared comparison link.');return bytes[cursor.at++]*16777216+bytes[cursor.at++]*65536+bytes[cursor.at++]*256+bytes[cursor.at++];}
-  function packShare(data,plans){
+  function packShareV2(data,plans){
     const planBytes=new TextEncoder().encode(JSON.stringify(plans)),bytes=[67,80,2,data.months.length];put16(bytes,planBytes.length);
     for(const month of data.months){const [year,number]=month.key.split('-').map(Number);put16(bytes,year);bytes.push(number);put32(bytes,Math.round(month.kwh*100));put16(bytes,month.count);put16(bytes,month.estimated);for(const hour of month.hours)put16(bytes,Math.round(hour*100));}
+    bytes.push(...planBytes);return bytesBase64(Uint8Array.from(bytes));
+  }
+  function quantize(data,scale){return {version:1,months:data.months.map(m=>({...m,kwh:Math.round(m.kwh*100)/100,hours:m.hours.map(v=>Math.round(v*100/scale)*scale/100)}))};}
+  function staysWithinTwoPercent(original,rounded,plans){
+    for(const plan of plans){const before=compareData(original,plan).months,after=compareData(rounded,plan).months;for(let i=0;i<before.length;i++){if(before[i].bill===null)continue;const difference=Math.abs(after[i].bill-before[i].bill);if(before[i].bill===0?difference>1:difference/before[i].bill>.02)return false;}}
+    return true;
+  }
+  function packShareV3(data,plans,scale){
+    const planBytes=new TextEncoder().encode(JSON.stringify(plans)),bytes=[67,80,3,data.months.length];put16(bytes,planBytes.length);put16(bytes,scale);
+    for(const month of data.months){const [year,number]=month.key.split('-').map(Number);put16(bytes,year);bytes.push(number);put32(bytes,Math.round(month.kwh*100));put16(bytes,month.count);put16(bytes,month.estimated);for(const hour of month.hours){const value=Math.round(hour*100/scale);if(value>255)throw new Error('This comparison is too large to share.');bytes.push(value);}}
     bytes.push(...planBytes);return bytesBase64(Uint8Array.from(bytes));
   }
   function unpackShare(bytes){
@@ -93,10 +103,14 @@
     if(!Array.isArray(plans))throw new Error('Invalid plans.');plans.forEach(validate);
     compareData(data,{name:'Validation',delivery:'0',deliveryUnit:'dollars',energy:'0',energyUnit:'dollars',base:'0',credits:[],free:false,discount:'none'});
     for(const plan of plans)if(plan.free&&plan.discount!=='weekly'&&(time(plan.start)%60||time(plan.end)%60))throw new Error(`“${plan.name}” uses 15-minute free-energy times. Shared comparisons support whole-hour boundaries; change its start and end to full hours first.`);
-    return packShare(data,plans);
+    const max=Math.max(...data.months.flatMap(m=>m.hours)),scale=Math.max(1,Math.ceil(max*100/255)),rounded=quantize(data,scale);
+    if(staysWithinTwoPercent(data,rounded,plans))return packShareV3(data,plans,scale);
+    const fine=quantize(data,1);if(!staysWithinTwoPercent(data,fine,plans))throw new Error('This combination of plans cannot stay within 2% using shareable hourly data. Remove the sensitive plan or share a higher-level summary.');
+    return packShareV2(data,plans);
   }
   function shareDecode(text){
-    const bytes=base64Bytes(text);if(bytes[0]===67&&bytes[1]===80&&bytes[2]===2){const shared=unpackShare(bytes);compareData(shared.data,{name:'Validation',delivery:'0',deliveryUnit:'dollars',energy:'0',energyUnit:'dollars',base:'0',credits:[],free:false,discount:'none'});return shared;}
+    const bytes=base64Bytes(text);if(bytes[0]===67&&bytes[1]===80&&bytes[2]===3){const cursor={at:3},monthCount=bytes[cursor.at++],planLength=get16(bytes,cursor),scale=get16(bytes,cursor);if(!monthCount||monthCount>120||!scale)throw new Error('Invalid shared comparison link.');const months=[];for(let i=0;i<monthCount;i++){const year=get16(bytes,cursor),number=bytes[cursor.at++],key=`${year}-${String(number).padStart(2,'0')}`,kwh=get32(bytes,cursor)/100,count=get16(bytes,cursor),estimated=get16(bytes,cursor),hours=Array.from({length:168},()=>{if(cursor.at>=bytes.length)throw new Error('Invalid shared comparison link.');return bytes[cursor.at++]*scale/100;});months.push({key,kwh,count,estimated,expected:expected(key),hours});}if(cursor.at+planLength!==bytes.length)throw new Error('Invalid shared comparison link.');const plans=JSON.parse(new TextDecoder().decode(bytes.slice(cursor.at)));if(!Array.isArray(plans)||plans.length>50)throw new Error('Invalid shared comparison link.');plans.forEach(validate);const shared={data:{version:1,months},plans,resolution:scale/100,compact:true};compareData(shared.data,{name:'Validation',delivery:'0',deliveryUnit:'dollars',energy:'0',energyUnit:'dollars',base:'0',credits:[],free:false,discount:'none'});return shared;}
+    if(bytes[0]===67&&bytes[1]===80&&bytes[2]===2){const shared=unpackShare(bytes);shared.resolution=.01;shared.compact=false;compareData(shared.data,{name:'Validation',delivery:'0',deliveryUnit:'dollars',energy:'0',energyUnit:'dollars',base:'0',credits:[],free:false,discount:'none'});return shared;}
     const payload=JSON.parse(new TextDecoder().decode(bytes));if(!payload||payload.v!==1||!Array.isArray(payload.m)||!payload.m.length||payload.m.length>120||!Array.isArray(payload.p)||payload.p.length>50)throw new Error('Invalid shared comparison link.');
     payload.p.forEach(validate);const months=payload.m.map(row=>{if(!Array.isArray(row)||row.length!==5||typeof row[0]!=='string'||!Number.isSafeInteger(row[1])||row[1]<0||!Number.isSafeInteger(row[2])||row[2]<0||!Number.isSafeInteger(row[3])||row[3]<0||!Array.isArray(row[4])||row[4].length!==168||!row[4].every(v=>Number.isSafeInteger(v)&&v>=0))throw new Error('Invalid shared comparison link.');return {key:row[0],kwh:row[1]/1000,count:row[2],estimated:row[3],expected:expected(row[0]),hours:row[4].map(v=>v/1000)};});
     const data={version:1,months};compareData(data,{name:'Validation',delivery:'0',deliveryUnit:'dollars',energy:'0',energyUnit:'dollars',base:'0',credits:[],free:false,discount:'none'});return {data,plans:payload.p};
