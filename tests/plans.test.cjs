@@ -1,4 +1,4 @@
-const {test}=require('node:test'),assert=require('node:assert/strict'),P=require('../plans.js');
+const {test}=require('node:test'),assert=require('node:assert/strict'),P=require('../plans.js'),D=require('../data.js');
 const plan={name:'Test',delivery:'5',deliveryUnit:'auto',base:'10',energy:'16',energyUnit:'auto',credits:[],free:false,start:'21:00',end:'07:00'};
 const row=(start,kwh,overrides={})=>({meter:'123',day:'2025-01-01',start,kwh,flow:'Consumption',estimated:false,...overrides});
 test('rate input auto-detects cents/dollars and allows explicit overrides',()=>{assert.equal(P.rate('16'),.16);assert.equal(P.rate('0.16'),.16);assert.equal(P.rate('5.5'),.055);assert.equal(P.rate('.5','cents'),.005);assert.equal(P.rate('1','dollars'),1);for(const n of ['',-1,'oops',Infinity])assert.throws(()=>P.rate(n));});
@@ -33,3 +33,10 @@ test('shared comparison preserves monthly bills and includes no meter IDs or int
 });
 test('shared data refuses plans that require sub-hour energy boundaries and rejects malformed links',()=>{
   const data=P.aggregate([row(0,1)],'123',['2025-01']);assert.throws(()=>P.shareEncode(data,[{...plan,free:true,start:'21:15',end:'07:00'}]),/whole-hour/);assert.throws(()=>P.shareDecode('oops!'));assert.throws(()=>P.shareDecode('a'.repeat(100001)));});
+test('binary shares are compact with bounded 0.01 kWh hourly rounding',()=>{
+  const records=D.demo(),keys=P.period('2025-12-31','2025'),p={...plan,free:true,discount:'weekly',startDay:5,endDay:0,weekStart:'19:00',weekEnd:'23:00'},data=P.aggregate(records,records[0].meter,keys),encoded=P.shareEncode(data,[p]),shared=P.shareDecode(encoded);
+  assert.ok(encoded.length<8000,`Expected <8 KB link; got ${encoded.length} bytes`);assert.equal(shared.data.months.length,12);for(let i=0;i<12;i++)assert.ok(Math.abs(shared.data.months[i].kwh-data.months[i].kwh)<=.005);assert.ok(Math.abs(P.compareData(shared.data,p).total-P.compareData(data,p).total)<=25);
+});
+test('legacy JSON shared links remain readable',()=>{
+  const data=P.aggregate([row(0,1)],'123',['2025-01']),payload={v:1,m:data.months.map(m=>[m.key,Math.round(m.kwh*1000),m.count,m.estimated,m.hours.map(v=>Math.round(v*1000))]),p:[plan]},legacy=btoa(JSON.stringify(payload)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');assert.equal(P.shareDecode(legacy).data.months[0].kwh,1);
+});

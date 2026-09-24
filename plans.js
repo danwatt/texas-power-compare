@@ -70,21 +70,34 @@
     if(year!=='latest')return Array.from({length:12},(_,i)=>`${year}-${String(i+1).padStart(2,'0')}`);
     const last=new Date(lastDay+'T00:00:00Z');return Array.from({length:12},(_,i)=>new Date(Date.UTC(last.getUTCFullYear(),last.getUTCMonth()-11+i,1)).toISOString().slice(0,7));
   }
-  function encodeBase64(value){
-    const bytes=new TextEncoder().encode(JSON.stringify(value));let text='';for(let i=0;i<bytes.length;i+=8192)text+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(text).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-  }
-  function decodeBase64(value){
+  function bytesBase64(bytes){let text='';for(let i=0;i<bytes.length;i+=8192)text+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(text).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+  function base64Bytes(value){
     if(!/^[A-Za-z0-9_-]+$/.test(value)||value.length>100000)throw new Error('Invalid shared comparison link.');
-    const padded=value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4),raw=atob(padded),bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));return JSON.parse(new TextDecoder().decode(bytes));
+    const padded=value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4),raw=atob(padded);return Uint8Array.from(raw,c=>c.charCodeAt(0));
+  }
+  function put16(bytes,value){if(!Number.isSafeInteger(value)||value<0||value>65535)throw new Error('This comparison is too large to share.');bytes.push(value>>8,value&255);}
+  function put32(bytes,value){if(!Number.isSafeInteger(value)||value<0||value>4294967295)throw new Error('This comparison is too large to share.');bytes.push(value>>>24,(value>>>16)&255,(value>>>8)&255,value&255);}
+  function get16(bytes,cursor){if(cursor.at+2>bytes.length)throw new Error('Invalid shared comparison link.');return bytes[cursor.at++]*256+bytes[cursor.at++];}
+  function get32(bytes,cursor){if(cursor.at+4>bytes.length)throw new Error('Invalid shared comparison link.');return bytes[cursor.at++]*16777216+bytes[cursor.at++]*65536+bytes[cursor.at++]*256+bytes[cursor.at++];}
+  function packShare(data,plans){
+    const planBytes=new TextEncoder().encode(JSON.stringify(plans)),bytes=[67,80,2,data.months.length];put16(bytes,planBytes.length);
+    for(const month of data.months){const [year,number]=month.key.split('-').map(Number);put16(bytes,year);bytes.push(number);put32(bytes,Math.round(month.kwh*100));put16(bytes,month.count);put16(bytes,month.estimated);for(const hour of month.hours)put16(bytes,Math.round(hour*100));}
+    bytes.push(...planBytes);return bytesBase64(Uint8Array.from(bytes));
+  }
+  function unpackShare(bytes){
+    const cursor={at:3},monthCount=bytes[cursor.at++],planLength=get16(bytes,cursor);if(!monthCount||monthCount>120)throw new Error('Invalid shared comparison link.');const months=[];
+    for(let i=0;i<monthCount;i++){const year=get16(bytes,cursor),number=bytes[cursor.at++],kwh=get32(bytes,cursor)/100,count=get16(bytes,cursor),estimated=get16(bytes,cursor),hours=Array.from({length:168},()=>get16(bytes,cursor)/100);months.push({key:`${year}-${String(number).padStart(2,'0')}`,kwh,count,estimated,expected:expected(`${year}-${String(number).padStart(2,'0')}`),hours});}
+    if(cursor.at+planLength!==bytes.length)throw new Error('Invalid shared comparison link.');const plans=JSON.parse(new TextDecoder().decode(bytes.slice(cursor.at)));if(!Array.isArray(plans)||plans.length>50)throw new Error('Invalid shared comparison link.');plans.forEach(validate);return {data:{version:1,months},plans};
   }
   function shareEncode(data,plans){
     if(!Array.isArray(plans))throw new Error('Invalid plans.');plans.forEach(validate);
     compareData(data,{name:'Validation',delivery:'0',deliveryUnit:'dollars',energy:'0',energyUnit:'dollars',base:'0',credits:[],free:false,discount:'none'});
     for(const plan of plans)if(plan.free&&plan.discount!=='weekly'&&(time(plan.start)%60||time(plan.end)%60))throw new Error(`“${plan.name}” uses 15-minute free-energy times. Shared comparisons support whole-hour boundaries; change its start and end to full hours first.`);
-    const payload={v:1,m:data.months.map(m=>[m.key,Math.round(m.kwh*1000),m.count,m.estimated,m.hours.map(v=>Math.round(v*1000))]),p:plans};return encodeBase64(payload);
+    return packShare(data,plans);
   }
   function shareDecode(text){
-    const payload=decodeBase64(text);if(!payload||payload.v!==1||!Array.isArray(payload.m)||!payload.m.length||payload.m.length>120||!Array.isArray(payload.p)||payload.p.length>50)throw new Error('Invalid shared comparison link.');
+    const bytes=base64Bytes(text);if(bytes[0]===67&&bytes[1]===80&&bytes[2]===2){const shared=unpackShare(bytes);compareData(shared.data,{name:'Validation',delivery:'0',deliveryUnit:'dollars',energy:'0',energyUnit:'dollars',base:'0',credits:[],free:false,discount:'none'});return shared;}
+    const payload=JSON.parse(new TextDecoder().decode(bytes));if(!payload||payload.v!==1||!Array.isArray(payload.m)||!payload.m.length||payload.m.length>120||!Array.isArray(payload.p)||payload.p.length>50)throw new Error('Invalid shared comparison link.');
     payload.p.forEach(validate);const months=payload.m.map(row=>{if(!Array.isArray(row)||row.length!==5||typeof row[0]!=='string'||!Number.isSafeInteger(row[1])||row[1]<0||!Number.isSafeInteger(row[2])||row[2]<0||!Number.isSafeInteger(row[3])||row[3]<0||!Array.isArray(row[4])||row[4].length!==168||!row[4].every(v=>Number.isSafeInteger(v)&&v>=0))throw new Error('Invalid shared comparison link.');return {key:row[0],kwh:row[1]/1000,count:row[2],estimated:row[3],expected:expected(row[0]),hours:row[4].map(v=>v/1000)};});
     const data={version:1,months};compareData(data,{name:'Validation',delivery:'0',deliveryUnit:'dollars',energy:'0',energyUnit:'dollars',base:'0',credits:[],free:false,discount:'none'});return {data,plans:payload.p};
   }
