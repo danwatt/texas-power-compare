@@ -36,13 +36,23 @@
     $('plan-period').replaceChildren();const latest=el('option','','Latest 12 calendar months');latest.value='latest';$('plan-period').append(latest);
     years.forEach(y=>{const o=el('option','',y);o.value=y;$('plan-period').append(o);});$('plan-period').value=years.includes(previous)?previous:'latest';render();
   }
+  function comparisonKeys(last){
+    if(sharedData)return sharedData.months.map(m=>m.key);
+    if(!last)return [];
+    if($('plan-independent').checked)return PowerPlans.period(last,$('plan-period').value);
+    const from=$('from').value,to=$('to').value;
+    if(!from||!to||from>to)return [];
+    const keys=[],date=new Date(from.slice(0,7)+'-01T00:00:00Z'),end=to.slice(0,7);
+    while(date.toISOString().slice(0,7)<=end&&keys.length<122){keys.push(date.toISOString().slice(0,7));date.setUTCMonth(date.getUTCMonth()+1);}
+    return keys;
+  }
   function render(){
     const relevant=records.filter(r=>r.meter===meter),last=relevant.length?relevant.at(-1).day:null;
-    const keys=sharedData?sharedData.months.map(m=>m.key):last?PowerPlans.period(last,$('plan-period').value):[];
-    const data=sharedData||last&&PowerPlans.aggregate(records,meter,keys);
-    const results=plans.map(p=>sharedData?PowerPlans.compareData(sharedData,p):last?PowerPlans.compare(records,meter,keys,p):null);
-    $('plan-context').textContent=sharedData?`Shared comparison · ${month(keys[0])}–${month(keys.at(-1))} · anonymous monthly and weekday/hour totals only. No ESI ID or 15-minute readings were included.`:last?`${demo?'Sample data · ':''}Meter ···${meter.slice(-6)} · ${month(keys[0])}–${month(keys.at(-1))} · Grid consumption only. This period is independent of the chart dates above.`:'Import usage or explore sample data to calculate bills. You can add plans now.';
-    $('shared-notice').hidden=!sharedData;$('share-plan').textContent=sharedData?'Copy updated share link':'Share comparison';
+    const keys=comparisonKeys(last);
+    const data=sharedData||keys.length&&PowerPlans.aggregate(records,meter,keys);
+    const results=plans.map(p=>sharedData?PowerPlans.compareData(sharedData,p):keys.length?PowerPlans.compare(records,meter,keys,p):null);
+    $('plan-context').textContent=sharedData?`Shared comparison · ${month(keys[0])}–${month(keys.at(-1))} · anonymous monthly and weekday/hour totals only. No ESI ID or 15-minute readings were included.`:keys.length?`${demo?'Sample data · ':''}Meter ···${meter.slice(-6)} · ${month(keys[0])}–${month(keys.at(-1))} · Grid consumption only. ${$('plan-independent').checked?'Custom comparison period.':'Follows analysis period, using full calendar months so monthly charges and credits stay meaningful.'}`:'Import usage or explore sample data to calculate bills. You can add plans now.';
+    $('shared-notice').hidden=!sharedData;$('plan-independent').parentElement.hidden=!!sharedData;$('plan-period-label').hidden=!sharedData&&!$('plan-independent').checked;$('share-plan').textContent=sharedData?'Copy updated share link':'Share comparison';
     $('plan-cards').replaceChildren();$('plan-results').replaceChildren();
     if(!plans.length)$('plan-cards').append(el('p','plan-empty','Add your first plan to compare its cost against your actual usage.'));
     plans.forEach((p,i)=>{
@@ -52,8 +62,8 @@
       if(p.credits.length)card.append(el('p','small','Monthly credits: '+p.credits.map(c=>`${money(Number(c.amount)*100)} at ${number(Number(c.threshold))}+ kWh`).join('; ')));
       if(p.free)card.append(el('p','small',p.discount==='weekly'?`Free energy: ${weekdays[p.startDay]} ${p.weekStart} through ${weekdays[p.endDay]} ${p.weekEnd.slice(0,2)}:59:59 each week; delivery still charged.`:`Free energy: ${p.start}–${p.end} daily (end time excluded); delivery still charged.`));
       const r=results[i];const summary=el('div','plan-summary');
-      for(const [label,value]of [[r?.complete===12?'Annual total':'Recorded-month total',money(r?.total??null)],['Average monthly bill',money(r?.average??null)],['Effective rate',r?.effective===null||!r?'—':number(r.effective)+'¢/kWh']]){const cell=el('div');cell.append(el('span','small',label),el('strong','',value));summary.append(cell);}card.append(summary);
-      card.append(el('p','small',r?`${r.known} of 12 months have readings · ${r.complete} meet the 96-readings/day coverage check. ${r.complete<12?'Partial data; not a full-year estimate.':''}`:'Waiting for usage data.'));$('plan-cards').append(card);
+      for(const [label,value]of [[r?.complete===12&&keys.length===12?'Annual total':'Recorded-month total',money(r?.total??null)],['Average monthly bill',money(r?.average??null)],['Effective rate',r?.effective===null||!r?'—':number(r.effective)+'¢/kWh']]){const cell=el('div');cell.append(el('span','small',label),el('strong','',value));summary.append(cell);}card.append(summary);
+      card.append(el('p','small',r?`${r.known} of ${keys.length} months have readings · ${r.complete} meet the 96-readings/day coverage check. ${r.complete<keys.length?'Partial data; totals use available readings only.':''}`:'Waiting for usage data.'));$('plan-cards').append(card);
     });
     if(!data||!plans.length)return;
     const table=el('table','plan-table');table.append(el('caption','','Estimated monthly bills — select a bill for its breakdown'));
@@ -70,7 +80,7 @@
   function share(){
     try{
       const relevant=records.filter(r=>r.meter===meter),last=relevant.length?relevant.at(-1).day:null;
-      const keys=sharedData?sharedData.months.map(m=>m.key):last?PowerPlans.period(last,$('plan-period').value):[];
+      const keys=comparisonKeys(last);
       if(!keys.length)throw new Error('Import usage before creating a share link.');
       const data=sharedData||PowerPlans.aggregate(records,meter,keys),payload=PowerPlans.shareEncode(data,plans),shared=PowerPlans.shareDecode(payload);
       const url=location.href.split('#')[0]+'#compare='+payload;$('share-link').value=url;$('share-size').textContent=`${(url.length/1024).toFixed(1)} KB link · ${shared.compact?`hourly buckets rounded to ${shared.resolution.toFixed(2)} kWh`:'.01 kWh hourly precision'} · ${plans.length?`included monthly bills stay within 2% of this browser’s calculation.`:'no included plans to compare.'}`;$('share-error').textContent='';$('share-dialog').showModal();
@@ -88,6 +98,7 @@
     try{const raw=localStorage.getItem(key);if(raw){const data=JSON.parse(raw);if(data.version!==1||!Array.isArray(data.plans))throw Error();data.plans.forEach(PowerPlans.validate);plans=data.plans;}}catch{$('plan-status').textContent='Saved plans could not be read. Add plans again to continue.';}
     loadShared();
     $('add-plan').onclick=()=>edit();$('share-plan').onclick=share;$('copy-share').onclick=copyShare;$('close-share').onclick=()=>$('share-dialog').close();$('exit-share').onclick=()=>{history.replaceState(null,'',location.href.split('#')[0]);location.reload();};$('close-plan').onclick=()=>$('plan-dialog').close();$('cancel-plan').onclick=()=>$('plan-dialog').close();$('close-bill').onclick=()=>$('bill-dialog').close();
+    $('plan-independent').onchange=render;
     $('add-credit').onclick=()=>creditRow();$('plan-discount').onchange=toggleTimes;$('plan-period').onchange=render;
     for(const f of ['delivery','energy'])for(const suffix of ['','Unit'])$('plan-'+f+suffix).addEventListener('input',rateHints);
     $('plan-form').onsubmit=e=>{e.preventDefault();try{

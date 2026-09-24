@@ -3,6 +3,41 @@ const $ = id => document.getElementById(id);
 const format = (n, digits = 0) => n.toLocaleString('en-US', {maximumFractionDigits:digits,minimumFractionDigits:digits});
 let records = [], demoMode = false, grouping = 'month', current, invalidRows = 0, duplicateRows = 0, fileCount = 0;
 let savedLocally=false;
+let activeTask = 'usage';
+function syncWorkspace() {
+  const loaded=records.length>0,shared=!$('shared-notice').hidden;
+  $('loaded-header').hidden=!loaded&&!shared;
+  $('welcome').hidden=loaded||shared;$('drop-zone').hidden=loaded||shared;
+  $('dashboard').hidden=!loaded;
+  $('empty').hidden=loaded||activeTask==='plans';
+  $('empty').querySelector('h2').textContent=activeTask==='loads'?'Start with your home’s measured usage':'Your everyday patterns. A clearer picture.';
+  $('usage-panel').hidden=activeTask!=='usage';$('loads-panel').hidden=activeTask!=='loads';$('plans-panel').hidden=activeTask!=='plans';
+  $('dashboard').querySelector('.dashboard-heading').hidden=true;
+  $('dashboard').querySelector('.flow-filter').hidden=activeTask!=='usage';
+  $('exit-demo').hidden=!demoMode;$('manage-data').hidden=shared;$('add-files').hidden=shared;
+  $('storage-status').hidden=shared;
+  $('loaded-summary').textContent=shared?'Anonymous shared comparison':demoMode?'Sample data · January–December 2025':$('dataset-info').textContent;
+  $('filter-scope').textContent=activeTask==='plans'?($('plan-independent').checked?'Plans use a separate period, selected below.':'Plans use grid consumption for the calendar months in this period.'):activeTask==='loads'?'Appliance scenarios use grid consumption in this period.':'Applies to usage charts. A typical day can use its own period.';
+  $('active-period').textContent=loaded?`${$('from').value} – ${$('to').value} · ${activeTask==='usage'?$('flow').selectedOptions[0].textContent:'Grid consumption'}`:'';
+  // Shared comparisons have their own fixed period and no access to private filters.
+  if(shared)$('dashboard').hidden=true;
+  for(const task of ['usage','plans','loads']){const tab=$('tab-'+task);tab.setAttribute('aria-selected',String(activeTask===task));tab.tabIndex=activeTask===task?0:-1;tab.hidden=shared&&task!=='plans';}
+}
+function selectTask(task){activeTask=task;syncWorkspace();}
+for(const task of ['usage','plans','loads']){
+  $('tab-'+task).onclick=()=>selectTask(task);
+  $('tab-'+task).onkeydown=e=>{
+    const tabs=['usage','plans','loads'].filter(t=>!$('tab-'+t).hidden),at=tabs.indexOf(task);
+    const next=e.key==='ArrowRight'?tabs[(at+1)%tabs.length]:e.key==='ArrowLeft'?tabs[(at+tabs.length-1)%tabs.length]:e.key==='Home'?tabs[0]:e.key==='End'?tabs.at(-1):null;
+    if(next){e.preventDefault();selectTask(next);$('tab-'+next).focus();}
+  };
+}
+$('plan-independent').addEventListener('change',syncWorkspace);
+$('add-files').onclick=()=>$('files').click();
+$('manage-data').onclick=()=>{$('data-summary').textContent=demoMode?'You are viewing sample data. Deleting saved usage also removes any personal imports stored in this browser.':$('dataset-info').textContent;$('data-dialog').showModal();};
+$('close-data').onclick=()=>$('data-dialog').close();
+$('data-help').onclick=()=>{$('data-dialog').close();$('guide').showModal();};
+$('exit-demo').onclick=()=>location.reload();
 function persist(){
   try{localStorage.setItem(PowerStorage.key,PowerStorage.encode(records,{fileCount,invalidRows,duplicateRows}));savedLocally=true;return true;}
   catch{savedLocally=false;return false;}
@@ -25,7 +60,7 @@ function setup() {
   if(records.some(r=>r.meter===old)) $('meter').value=old;
   $('dashboard').hidden=false;$('empty').hidden=true;$('demo-badge').hidden=!demoMode;
   $('dataset-info').textContent=demoMode?'Illustrative sample · January–December 2025 · not saved':`${fileCount} file${fileCount===1?'':'s'} imported · ${format(records.length)} readings · ${savedLocally?'saved on this browser':'not saved — this tab only'}`;
-  bounds();setupRhythm();render();
+  bounds();setupRhythm();render();syncWorkspace();
 }
 async function importFiles(files) {
   if(!files.length)return;
@@ -51,7 +86,7 @@ function render() {
   const stats=[['Total energy',format(s.total), 'kWh','In the selected date range'],['Average day',s.averageDay===null?'—':format(s.averageDay,1),'kWh',`${s.completeDays} complete days only`],['Peak demand',s.selected.length?format(s.peak,2):'—','kW','Highest 15-minute average'],['Readings available',s.expected?format(s.selected.length/s.expected*100,1):'0','%',`${format(s.selected.length)} of ${format(s.expected)} expected*`]];
   for(const [label,value,unit,note]of stats){const box=node('div','stat');box.append(node('div','stat-label',label));const v=node('div','stat-value',value);v.append(node('small','',unit));box.append(v,node('div','stat-note',note));$('stats').append(box);}
   $('quality').textContent=`${s.selected.length?'':'No readings for this meter, date range, and energy type. '}${s.estimated?format(s.estimated)+' estimated readings included. ':''}*Coverage assumes 96 readings per day; daylight-saving days may differ. ${s.selected.length<s.expected?'Partial totals are not extrapolated.':''}`;
-  renderHeatmap(s);renderMonthly(s);updateRhythm();PowerPlansUI.update(records,$('meter').value,demoMode);LoadPlanner.update(records,$('meter').value);
+  renderHeatmap(s);renderMonthly(s);updateRhythm();PowerPlansUI.update(records,$('meter').value,demoMode);LoadPlanner.update(records,$('meter').value);syncWorkspace();
 }
 function setupRhythm(){
   const available=records.filter(r=>r.meter===$('meter').value),years=[...new Set(available.map(r=>r.day.slice(0,4)))].sort();
@@ -65,7 +100,7 @@ function updateRhythm(){
   $('rhythm-year-label').hidden=!['year','season'].includes(mode);
   $('rhythm-seasons').hidden=mode!=='season';
   $('rhythm-start-label').hidden=mode!=='range';$('rhythm-end-label').hidden=mode!=='range';$('rhythm-month-label').hidden=mode!=='month';
-  let from=$('from').value,to=$('to').value,source=records,description='Dashboard dates';
+  let from=$('from').value,to=$('to').value,source=records,description='Analysis period';
   const endOfMonth=m=>new Date(Date.UTC(Number(m.slice(0,4)),Number(m.slice(5,7)),0)).toISOString().slice(0,10);
   const validMonth=m=>/^\d{4}-(0[1-9]|1[0-2])$/.test(m);
   function empty(message){$('profile').replaceChildren();$('rhythm-summary').textContent=message;}
@@ -85,7 +120,7 @@ function updateRhythm(){
   if(!from||!to||from>to||(new Date(to)-new Date(from))/86400000>3660){empty('Choose a valid period of 10 years or less.');return;}
   const result=PowerData.analyze(source,{meter:$('meter').value,from,to,flow:$('flow').value});
   const hours=result.profile.flat().reduce((sum,c)=>sum+c.count,0);
-  $('rhythm-summary').textContent=`${description} · ${format(hours)} complete hours · ${mode==='selected'?'Follows dashboard dates':'Applies only to this chart'}`;
+  $('rhythm-summary').textContent=`${description} · ${from} – ${to} · ${format(hours)} complete hours · ${mode==='selected'?'Follows analysis period':'Applies only to this chart'}`;
   if(!hours){$('profile').replaceChildren(node('p','rhythm-empty','No complete hourly readings for this period and energy type.'));return;}
   renderProfile(result);
 }
@@ -125,9 +160,9 @@ function renderProfile(s){
 }
 $('files').onchange=e=>importFiles([...e.target.files]);
 for(const type of ['dragover','dragleave','drop'])$('drop-zone').addEventListener(type,e=>{e.preventDefault();$('drop-zone').classList.toggle('dragging',type==='dragover');if(type==='drop'&&!$('files').disabled)importFiles([...e.dataTransfer.files]);});
-$('demo').onclick=()=>{records=PowerData.demo();demoMode=true;invalidRows=0;duplicateRows=0;fileCount=0;status('Showing illustrative sample data. Import your CSV to see your own usage.');$('storage-status').textContent='Demo data is not saved. Any saved imports will return on refresh; Clear data also removes those saved imports.';setup();};
-$('clear').onclick=()=>{try{localStorage.removeItem(PowerStorage.key);}catch{$('storage-status').textContent='Could not remove the saved copy. Clear this site’s data in your browser settings, then try again.';return;}records=[];current=null;invalidRows=0;duplicateRows=0;fileCount=0;demoMode=false;savedLocally=false;for(const id of ['stats','heatmap','monthly','profile','meter','rhythm-year'])$(id).replaceChildren();for(const id of ['dataset-info','quality','cell-detail','rhythm-summary','storage-status'])$(id).textContent='';$('from').value='';$('to').value='';$('dashboard').hidden=true;$('empty').hidden=false;status('Data cleared from this tab and browser storage.');PowerPlansUI.update([], '', false);LoadPlanner.update([], '');};
-$('meter').onchange=()=>{bounds();setupRhythm();render();};for(const id of ['from','to','flow'])$(id).onchange=render;
+$('demo').onclick=()=>{records=PowerData.demo();demoMode=true;invalidRows=0;duplicateRows=0;fileCount=0;status('');$('storage-status').textContent='Sample data is not saved. Exit demo to return to your own data.';setup();};
+$('clear').onclick=()=>{if(!confirm('Delete all saved usage from this browser? Keep your original CSVs to import it again. Electricity plans will be kept.'))return;try{localStorage.removeItem(PowerStorage.key);}catch{$('storage-status').textContent='Could not remove the saved copy. Clear this site’s data in your browser settings, then try again.';return;}records=[];current=null;invalidRows=0;duplicateRows=0;fileCount=0;demoMode=false;savedLocally=false;for(const id of ['stats','heatmap','monthly','profile','meter','rhythm-year'])$(id).replaceChildren();for(const id of ['dataset-info','quality','cell-detail','rhythm-summary','storage-status'])$(id).textContent='';$('from').value='';$('to').value='';$('dashboard').hidden=true;$('empty').hidden=false;status('Data cleared from this tab and browser storage.');PowerPlansUI.update([], '', false);LoadPlanner.update([], '');$('data-dialog').close();syncWorkspace();};
+$('meter').onchange=()=>{bounds();setupRhythm();render();syncWorkspace();};for(const id of ['from','to','flow'])$(id).onchange=render;
 for(const id of ['rhythm-period','rhythm-year','rhythm-start','rhythm-end','rhythm-month','rhythm-seasons'])$(id).addEventListener('change',updateRhythm);
 $('last-year').onclick=()=>{bounds();render();};$('all-dates').onclick=()=>{bounds(false);render();};
 for(const[id,g]of [['months','month'],['weeks','week']])$(id).onclick=()=>{grouping=g;$('months').setAttribute('aria-pressed',g==='month');$('weeks').setAttribute('aria-pressed',g==='week');render();};
@@ -137,5 +172,8 @@ PowerPlansUI.init();
 LoadPlanner.init();
 try{
   const text=localStorage.getItem(PowerStorage.key);
-  if(text){const restored=PowerStorage.decode(text);records=restored.records;({fileCount,invalidRows,duplicateRows}=restored.meta);savedLocally=true;setup();$('storage-status').textContent='Restored readings saved on this browser. Clear data removes the saved copy.';}
+  if(text){const restored=PowerStorage.decode(text);records=restored.records;({fileCount,invalidRows,duplicateRows}=restored.meta);savedLocally=true;setup();$('storage-status').textContent='Restored readings saved on this browser. Manage data lets you delete the saved copy.';}
 }catch{$('storage-status').textContent='Saved data could not be read or browser storage is unavailable. Import your CSV to continue.';}
+
+if(!$('shared-notice').hidden)activeTask='plans';
+syncWorkspace();
