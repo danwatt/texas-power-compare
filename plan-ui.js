@@ -17,17 +17,20 @@
     for(const [field,label]of [['amount','Credit ($)'],['threshold','At least (kWh/month)']]){const l=el('label','',label),input=el('input');input.type='number';input.min='0';input.step='any';input.required=true;input.dataset.field=field;input.value=credit[field];l.append(input);row.append(l);}
     row.append(button('Remove',()=>row.remove()));$('plan-credits').append(row);
   }
-  function edit(index=null){
-    editing=index;const p=index===null?{name:'',delivery:'',deliveryUnit:'auto',energy:'',energyUnit:'auto',base:'',credits:[],free:false,start:'21:00',end:'07:00'}:plans[index];
-    $('plan-dialog-title').textContent=index===null?'Add an electricity plan':'Edit electricity plan';
+  function edit(index=null,duplicate=false){
+    editing=duplicate?null:index;const p=index===null?{name:'',delivery:'',deliveryUnit:'cents',energy:'',energyUnit:'cents',base:'',credits:[],free:false,start:'21:00',end:'07:00'}:plans[index];
+    $('plan-dialog-title').textContent=duplicate?'Duplicate electricity plan':index===null?'Add an electricity plan':'Edit electricity plan';
     for(const f of ['name','delivery','deliveryUnit','energy','energyUnit','base','start','end'])$('plan-'+f).value=p[f];
+    if(duplicate)$('plan-name').value=(p.name+' (copy)').slice(0,120);
+    for(const f of ['delivery','energy'])if(!p[f+'Unit']||p[f+'Unit']==='auto')$('plan-'+f+'Unit').value=Number(p[f])>=1?'cents':'dollars';
+    $('plan-current').checked=!duplicate&&!!p.current;
     $('plan-discount').value=p.free?(p.discount||'daily'):'none';
     $('plan-startDay').value=p.startDay??5;$('plan-endDay').value=p.endDay??0;
     $('plan-weekStart').value=p.weekStart||'19:00';$('plan-weekEnd').value=p.weekEnd||'23:00';
     toggleTimes();$('plan-credits').replaceChildren();p.credits.forEach(creditRow);
     $('plan-error').textContent='';rateHints();$('plan-dialog').showModal();
   }
-  function rateHints(){for(const f of ['delivery','energy']){try{$('plan-'+f+'-hint').textContent=`Interpreted as ${number(PowerPlans.rate($('plan-'+f).value,$('plan-'+f+'Unit').value)*100)}¢/kWh`;}catch{$('plan-'+f+'-hint').textContent='Enter a rate to see the interpreted price.';}}}
+  function rateHints(){for(const f of ['delivery','energy']){try{$('plan-'+f+'-hint').textContent=`Rate: ${number(PowerPlans.rate($('plan-'+f).value,$('plan-'+f+'Unit').value)*100)}¢/kWh`;}catch{$('plan-'+f+'-hint').textContent='Enter a rate to see the interpreted price.';}}}
   function toggleTimes(){const mode=$('plan-discount').value;$('plan-times').hidden=mode!=='daily';$('plan-week-times').hidden=mode!=='weekly';for(const f of ['start','end'])$('plan-'+f).disabled=mode!=='daily';for(const f of ['startDay','endDay','weekStart','weekEnd'])$('plan-'+f).disabled=mode!=='weekly';}
   function update(nextRecords,nextMeter,isDemo){
     if(sharedData)return;
@@ -53,23 +56,30 @@
     const results=plans.map(p=>sharedData?PowerPlans.compareData(sharedData,p):keys.length?PowerPlans.compare(records,meter,keys,p):null);
     $('plan-context').textContent=sharedData?`Shared comparison · ${month(keys[0])}–${month(keys.at(-1))} · anonymous monthly and weekday/hour totals only. No ESI ID or 15-minute readings were included.`:keys.length?`${demo?'Sample data · ':''}Meter ···${meter.slice(-6)} · ${month(keys[0])}–${month(keys.at(-1))} · Grid consumption only. ${$('plan-independent').checked?'Custom comparison period.':'Follows analysis period, using full calendar months so monthly charges and credits stay meaningful.'}`:'Import usage or explore sample data to calculate bills. You can add plans now.';
     $('shared-notice').hidden=!sharedData;$('plan-independent').parentElement.hidden=!!sharedData;$('plan-period-label').hidden=!sharedData&&!$('plan-independent').checked;$('share-plan').textContent=sharedData?'Copy updated share link':'Share comparison';
+    const baselineIndex=plans.findIndex(p=>p.current),ranked=PowerPlans.rank(results,baselineIndex),best=ranked.find(entry=>entry.total!==null);
+    $('plan-comparison-summary').textContent=plans.length===1?'Add another plan or duplicate this one to compare costs.':baselineIndex<0?'Mark your current plan to see estimated savings.':!best?'Add usage to compare costs against your current plan.':`${plans[best.index].name} has ${ranked.filter(entry=>entry.total===best.total).length>1?'a joint lowest':'the lowest'} estimated cost for this period. ${results[best.index].complete<keys.length?'Partial data — estimates and savings cover recorded usage only.':'Estimates exclude taxes and other fees.'}`;
+    $('plan-comparison-summary').hidden=!plans.length;
     $('plan-cards').replaceChildren();$('plan-results').replaceChildren();
     if(!plans.length)$('plan-cards').append(el('p','plan-empty','Add your first plan to compare its cost against your actual usage.'));
-    plans.forEach((p,i)=>{
+    ranked.forEach(({index:i,rank,savings})=>{
+      const p=plans[i];
       const card=el('article','plan-card'),head=el('div','plan-card-heading');head.append(el('h3','',p.name));
-      const actions=el('div');actions.append(button('Edit',()=>edit(i)),button('Remove',()=>{plans.splice(i,1);save();render();}));head.append(actions);card.append(head);
+      const badges=el('div','plan-badges');if(p.current)badges.append(el('span','badge current-badge','Current plan'));if(rank!==null)badges.append(el('span','badge',rank===1?(ranked.filter(entry=>entry.rank===1).length>1?'Joint lowest estimate':'Lowest estimate'):`#${rank} by cost`));card.append(badges);if(rank===1)card.classList.add('plan-best');
+      const actions=el('div','plan-card-actions');actions.append(button('Edit',()=>edit(i)),button('Duplicate',()=>edit(i,true)),button('Remove',()=>{plans.splice(i,1);save();render();}));card.append(head,actions);if(!p.current)actions.append(button('Set as current plan',()=>{plans.forEach((plan,index)=>plan.current=index===i);save();render();}));
       card.append(el('p','small',`${number(PowerPlans.rate(p.energy,p.energyUnit)*100)}¢ energy + ${number(PowerPlans.rate(p.delivery,p.deliveryUnit)*100)}¢ delivery / kWh · ${money(Number(p.base)*100)} base / month`));
       if(p.credits.length)card.append(el('p','small','Monthly credits: '+p.credits.map(c=>`${money(Number(c.amount)*100)} at ${number(Number(c.threshold))}+ kWh`).join('; ')));
       if(p.free)card.append(el('p','small',p.discount==='weekly'?`Free energy: ${weekdays[p.startDay]} ${p.weekStart} through ${weekdays[p.endDay]} ${p.weekEnd.slice(0,2)}:59:59 each week; delivery still charged.`:`Free energy: ${p.start}–${p.end} daily (end time excluded); delivery still charged.`));
       const r=results[i];const summary=el('div','plan-summary');
       for(const [label,value]of [[r?.complete===12&&keys.length===12?'Annual total':'Recorded-month total',money(r?.total??null)],['Average monthly bill',money(r?.average??null)],['Effective rate',r?.effective===null||!r?'—':number(r.effective)+'¢/kWh']]){const cell=el('div');cell.append(el('span','small',label),el('strong','',value));summary.append(cell);}card.append(summary);
-      card.append(el('p','small',r?`${r.known} of ${keys.length} months have readings · ${r.complete} meet the 96-readings/day coverage check. ${r.complete<keys.length?'Partial data; totals use available readings only.':''}`:'Waiting for usage data.'));$('plan-cards').append(card);
+      if(savings!==null&&!p.current)card.append(el('p',savings>0?'plan-savings':'plan-cost-difference',savings>0?`Save ${money(savings)} vs. current plan over this period`:savings<0?`${money(-savings)} more than current plan over this period`:'Same estimated cost as current plan'));
+      if(r&&r.complete<keys.length)card.append(el('p','coverage-warning','Partial data · Cost and savings use recorded usage only.'));
+      card.append(el('p','small',r?`${r.known} of ${keys.length} months have readings · ${r.complete} meet the 96-readings/day coverage check.`:'Waiting for usage data.'));$('plan-cards').append(card);
     });
     if(!data||!plans.length)return;
     const table=el('table','plan-table');table.append(el('caption','','Estimated monthly bills — select a bill for its breakdown'));
-    const head=el('thead'),tr=el('tr');for(const label of ['Month','Recorded kWh',...plans.map(p=>p.name)])tr.append(el('th','',label));head.append(tr);table.append(head);
+    const head=el('thead'),tr=el('tr');for(const label of ['Month','Recorded kWh',...ranked.map(({index})=>plans[index].name+(plans[index].current?' (current)':''))])tr.append(el('th','',label));head.append(tr);table.append(head);
     const body=el('tbody');keys.forEach((k,j)=>{const row=el('tr'),m=results[0].months[j];const label=el('th','',month(k));label.scope='row';row.append(label,el('td','',m.count?number(m.kwh):'—'));
-      results.forEach((r,i)=>{const v=r.months[j],cell=el('td');if(v.bill===null)cell.append(el('span','small','No readings'));else{const b=button(money(v.bill)+(v.complete?'':' *'),()=>breakdown(plans[i],v),'bill-button');b.setAttribute('aria-label',`${plans[i].name}, ${month(k)}: ${money(v.bill)}${v.complete?'':', partial data'}. Show breakdown`);cell.append(b);}row.append(cell);});body.append(row);});table.append(body);$('plan-results').append(table);
+      ranked.forEach(({index:i})=>{const r=results[i];const v=r.months[j],cell=el('td');if(v.bill===null)cell.append(el('span','small','No readings'));else{const b=button(money(v.bill)+(v.complete?'':' *'),()=>breakdown(plans[i],v),'bill-button');b.setAttribute('aria-label',`${plans[i].name}, ${month(k)}: ${money(v.bill)}${v.complete?'':', partial data'}. Show breakdown`);cell.append(b);}row.append(cell);});body.append(row);});table.append(body);$('plan-results').append(table);
   }
   function breakdown(p,m){
     $('bill-title').textContent=p.name+' · '+month(m.key);$('bill-lines').replaceChildren();
@@ -103,7 +113,9 @@
     for(const f of ['delivery','energy'])for(const suffix of ['','Unit'])$('plan-'+f+suffix).addEventListener('input',rateHints);
     $('plan-form').onsubmit=e=>{e.preventDefault();try{
       const p={};for(const f of ['name','delivery','deliveryUnit','energy','energyUnit','base','start','end','discount','weekStart','weekEnd'])p[f]=$('plan-'+f).value;p.name=p.name.trim();p.free=p.discount!=='none';p.startDay=Number($('plan-startDay').value);p.endDay=Number($('plan-endDay').value);
+      p.current=$('plan-current').checked;
       p.credits=[...$('plan-credits').children].map(row=>({amount:row.querySelector('[data-field=amount]').value,threshold:row.querySelector('[data-field=threshold]').value}));PowerPlans.validate(p);
+      if(p.current)plans.forEach(plan=>plan.current=false);
       if(editing===null)plans.push(p);else plans[editing]=p;save();render();$('plan-dialog').close();
     }catch(error){$('plan-error').textContent=error.message;}};
     render();

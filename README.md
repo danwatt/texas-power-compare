@@ -42,7 +42,7 @@ Imported readings use a versioned compact array format with dictionaries for rep
 
 ## Plan comparisons
 
-Add any number of provider/plan definitions. Enter utility delivery per kWh, monthly utility base, energy per kWh, zero or more threshold credits, and optional free-energy times (default 21:00–07:00, editable in 15-minute steps). Rate fields interpret values below 1 as dollars and values of 1 or more as cents; explicit cents/dollars selectors override that rule, and the interpreted rate is shown before saving. Base charges and bill credits are always dollars.
+Add any number of provider/plan definitions. Enter utility delivery per kWh, monthly utility base, energy per kWh, zero or more threshold credits, and optional free-energy times (default 21:00–07:00, editable in 15-minute steps). New plans default to explicit cents/kWh fields, with dollars/kWh available as an alternative. Previously saved auto-unit rates open with their equivalent explicit unit without changing the rate. The rate is previewed before saving. Mark one plan as your current plan to see period savings; cards and table columns sort by estimated cost, with ties labeled. Savings use recorded-month totals and are never annualized from partial data. Duplicate opens a prefilled editor and creates a separate alternative only when saved; it does not inherit the current-plan designation. The current-plan designation persists with plans and is included in share links. Base charges and bill credits are always dollars.
 
 Use the Usage, Compare plans, and Add appliances tabs to switch tasks. After usage loads, a compact header offers Add CSVs and Manage data; Exit demo returns to saved imports without deleting them. Deleting usage requires confirmation in Manage data.
 

@@ -40,3 +40,33 @@ test('binary shares are compact with adaptive hourly rounding under a 2% bill bo
 test('legacy JSON shared links remain readable',()=>{
   const data=P.aggregate([row(0,1)],'123',['2025-01']),payload={v:1,m:data.months.map(m=>[m.key,Math.round(m.kwh*1000),m.count,m.estimated,m.hours.map(v=>Math.round(v*1000))]),p:[plan]},legacy=btoa(JSON.stringify(payload)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');assert.equal(P.shareDecode(legacy).data.months[0].kwh,1);
 });
+
+test('ranking handles ties, zero bills, missing usage, and baseline savings',()=>{
+  const results=[{total:12000},{total:9000},{total:9000},{total:0},{total:null},null];
+  assert.deepEqual(P.rank(results,0),[
+    {index:3,total:0,rank:1,savings:12000},
+    {index:1,total:9000,rank:2,savings:3000},
+    {index:2,total:9000,rank:2,savings:3000},
+    {index:0,total:12000,rank:4,savings:0},
+    {index:4,total:null,rank:null,savings:null},
+    {index:5,total:null,rank:null,savings:null}
+  ]);
+  assert.equal(P.rank(results,3).find(r=>r.index===0).savings,-12000);
+  assert.ok(P.rank(results).every(r=>r.savings===null));
+  assert.ok(P.rank(results,4).every(r=>r.savings===null));
+  assert.deepEqual(P.rank([]),[]);
+});
+test('partial-month savings use recorded totals without annualizing',()=>{
+  const records=[row(0,100)],keys=['2025-01','2025-02'];
+  const results=[P.compare(records,'123',keys,plan),P.compare(records,'123',keys,{...plan,energy:'10'})];
+  assert.equal(P.rank(results,0)[0].savings,600);
+  assert.equal(results[0].known,1);assert.equal(results[0].complete,0);
+});
+test('shared links retain current-plan selection and explicit rate units',()=>{
+  const current={...plan,current:true,energy:'.16',energyUnit:'dollars'},alternative={...plan,energy:'12',energyUnit:'cents',current:false};
+  const data=P.aggregate([row(0,100)],'123',['2025-01']);
+  const decoded=P.shareDecode(P.shareEncode(data,[current,alternative]));
+  assert.deepEqual(decoded.plans,[current,alternative]);
+  assert.equal(P.rank(decoded.plans.map(p=>P.compareData(decoded.data,p)),0)[0].savings,400);
+  assert.throws(()=>P.validate({...plan,current:'yes'}));
+});

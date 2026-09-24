@@ -10,6 +10,7 @@
   function time(value){const m=/^(\d{2}):(\d{2})$/.exec(value);return m&&+m[1]<24&&+m[2]<60?+m[1]*60 + +m[2]:NaN;}
   function validate(plan){
     if(!plan||typeof plan.name!=='string'||!plan.name.trim())throw new Error('Enter a provider and plan name.');
+    if(plan.current!==undefined&&typeof plan.current!=='boolean')throw new Error('Invalid current-plan setting.');
     rate(plan.delivery,plan.deliveryUnit);rate(plan.energy,plan.energyUnit);
     const nonnegative=n=>String(n).trim()!==''&&Number.isFinite(Number(n))&&Number(n)>=0;
     if(!nonnegative(plan.base))throw new Error('Enter a nonnegative monthly base charge.');
@@ -66,6 +67,17 @@
     for(const r of records)if(r.meter===meter&&r.flow==='Consumption'){const m=map.get(r.day.slice(0,7));if(m&&(start<end?r.start>=start&&r.start<end:r.start>=start||r.start<end))m.freeKwh=(m.freeKwh||0)+r.kwh;}
     for(const m of data.months)m.freeKwh=m.freeKwh||0;return settle(data.months,plan);
   }
+  // All results must cover the same meter and period, as in the comparison UI.
+  function rank(results,baselineIndex=-1){
+    const baseline=results[baselineIndex],baselineTotal=baseline?.total;
+    const order=results.map((result,index)=>({index,total:result?.total??null})).sort((a,b)=>a.total===null?(b.total===null?a.index-b.index:1):b.total===null?-1:a.total-b.total||a.index-b.index);
+    let lastTotal=null,rank=0;
+    return order.map((entry,position)=>{
+      if(entry.total!==null&&entry.total!==lastTotal)rank=position+1;
+      lastTotal=entry.total;
+      return {...entry,rank:entry.total===null?null:rank,savings:entry.total!==null&&baselineTotal!=null?baselineTotal-entry.total:null};
+    });
+  }
   function period(lastDay,year){
     if(year!=='latest')return Array.from({length:12},(_,i)=>`${year}-${String(i+1).padStart(2,'0')}`);
     const last=new Date(lastDay+'T00:00:00Z');return Array.from({length:12},(_,i)=>new Date(Date.UTC(last.getUTCFullYear(),last.getUTCMonth()-11+i,1)).toISOString().slice(0,7));
@@ -115,5 +127,5 @@
     payload.p.forEach(validate);const months=payload.m.map(row=>{if(!Array.isArray(row)||row.length!==5||typeof row[0]!=='string'||!Number.isSafeInteger(row[1])||row[1]<0||!Number.isSafeInteger(row[2])||row[2]<0||!Number.isSafeInteger(row[3])||row[3]<0||!Array.isArray(row[4])||row[4].length!==168||!row[4].every(v=>Number.isSafeInteger(v)&&v>=0))throw new Error('Invalid shared comparison link.');return {key:row[0],kwh:row[1]/1000,count:row[2],estimated:row[3],expected:expected(row[0]),hours:row[4].map(v=>v/1000)};});
     const data={version:1,months};compareData(data,{name:'Validation',delivery:'0',deliveryUnit:'dollars',energy:'0',energyUnit:'dollars',base:'0',credits:[],free:false,discount:'none'});return {data,plans:payload.p};
   }
-  const api={rate,time,validate,aggregate,compare,compareData,period,shareEncode,shareDecode};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PowerPlans=api;
+  const api={rank,rate,time,validate,aggregate,compare,compareData,period,shareEncode,shareDecode};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PowerPlans=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

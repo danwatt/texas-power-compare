@@ -25,3 +25,10 @@
 #plans-panel,#loads-panel{margin-top:0}#data-dialog hr{border:0;border-top:1px solid var(--border);margin:24px 0}
 #data-dialog h2{margin:0}#data-dialog .dialog-heading{margin-bottom:20px}
 @media(max-width:600px){.loaded-header{align-items:start;flex-direction:column;gap:10px}.task-tabs{gap:12px}.task-tabs button{font-size:14px;flex:1}.filter-heading{align-items:start;flex-direction:column;gap:5px}.loaded-header h1{font-size:28px}}
+
+.comparison-summary{background:#edf3ff;border-left:3px solid var(--green);padding:14px 16px;font-size:14px;color:#263b60}
+.plan-badges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.current-badge{background:#dce9ff;color:#244b94}.plan-best{border-color:#789bdc}
+.plan-card .plan-card-actions{display:flex;gap:14px;flex-wrap:wrap;margin:12px 0}.plan-card-actions button{padding:6px 0}
+.plan-savings{color:#23633d;font-weight:600;font-size:15px}.plan-cost-difference{font-size:14px;color:#4b5870}.coverage-warning{font-size:13px;color:#805010;background:#fff3dc;padding:8px;border-radius:5px}
+.plan-form-section{border:1px solid var(--border);border-radius:8px;padding:16px;margin:20px 0;min-width:0}.plan-form-section legend{font-weight:600;font-size:15px;padding:0 6px}.plan-form-section .plan-rate-row:first-of-type{margin-top:0}.plan-form-section .plan-credit-heading{margin-top:0}
+.plan-card .plan-summary{gap:14px}.plan-card .plan-summary strong{font-variant-numeric:tabular-nums}
