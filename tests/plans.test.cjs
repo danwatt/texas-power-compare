@@ -26,3 +26,10 @@ test('same-day weekly window is limited to that weekday; disabling removes free 
   assert.equal(P.compare(data,'123',['2025-01'],p).months[0].freeKwh,2);
   assert.equal(P.compare(data,'123',['2025-01'],{...p,free:false,discount:'none'}).months[0].freeKwh,0);
 });
+test('shared comparison preserves monthly bills and includes no meter IDs or interval dates',()=>{
+  const records=[];for(let d=new Date('2025-01-01T00:00:00Z');d<new Date('2025-02-01T00:00:00Z');d=new Date(+d+86400000))for(let h=0;h<24;h++)records.push(row(h*60,.5,{day:d.toISOString().slice(0,10),meter:'10443720000790198'}));
+  const p={...plan,free:true,discount:'weekly',startDay:5,endDay:0,weekStart:'19:00',weekEnd:'23:00'},data=P.aggregate(records,'10443720000790198',['2025-01']),encoded=P.shareEncode(data,[p]),shared=P.shareDecode(encoded);
+  assert.equal(P.compareData(shared.data,p).total,P.compare(records,'10443720000790198',['2025-01'],p).total);assert.deepEqual(shared.plans,[p]);assert.ok(!encoded.includes('10443720000790198'));assert.ok(!encoded.includes('2025-01-03'));
+});
+test('shared data refuses plans that require sub-hour energy boundaries and rejects malformed links',()=>{
+  const data=P.aggregate([row(0,1)],'123',['2025-01']);assert.throws(()=>P.shareEncode(data,[{...plan,free:true,start:'21:15',end:'07:00'}]),/whole-hour/);assert.throws(()=>P.shareDecode('oops!'));assert.throws(()=>P.shareDecode('a'.repeat(100001)));});
