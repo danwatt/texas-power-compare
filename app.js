@@ -64,16 +64,18 @@ function setup() {
 }
 async function importFiles(files) {
   if(!files.length)return;
-  $('files').disabled=true;$('demo').disabled=true;status('Reading your CSV files…');
+  const fileWord=files.length===1?'file':'files';
+  $('files').disabled=true;$('demo').disabled=true;$('drop-zone').setAttribute('aria-busy','true');status(`Reading ${format(files.length)} CSV ${fileWord}…`);
   try {
-    const additions=[];let invalid=0;
-    for(const file of files){if(!/\.csv$/i.test(file.name))throw new Error(`${file.name}: please select a CSV file.`);if(file.size>50*1024*1024)throw new Error('Please use CSV files smaller than 50 MB.'); const parsed=PowerData.parse(await file.text());for(const record of parsed.records)additions.push(record);invalid+=parsed.invalid;}
+    const replacedDemo=demoMode;
+    const parsedFiles=await Promise.all(files.map(async file=>{if(!/\.csv$/i.test(file.name))throw new Error(`${file.name}: please select a CSV file.`);if(file.size>50*1024*1024)throw new Error(`${file.name}: please use files smaller than 50 MB.`);try{return {file,parsed:PowerData.parse(await file.text())};}catch(error){throw new Error(`${file.name}: ${error.message}`);}}));
+    const additions=parsedFiles.flatMap(({parsed})=>parsed.records),invalid=parsedFiles.reduce((total,{parsed})=>total+parsed.invalid,0);
     const merged=PowerData.merge((demoMode?[]:records).concat(additions));
     if(demoMode){invalidRows=0;duplicateRows=0;fileCount=0;}
     records=merged.records;demoMode=false;invalidRows+=invalid;duplicateRows+=merged.duplicates;fileCount+=files.length;
-    const saved=persist();setup();status(`Imported successfully.${invalidRows?' '+format(invalidRows)+' invalid rows skipped.':''}${duplicateRows?' '+format(duplicateRows)+' overlapping readings resolved using revision dates.':''}`);
+    const saved=persist();setup();const source=replacedDemo?'Replaced sample data':'Added data';status(`${source} from ${format(files.length)} CSV ${fileWord}: ${format(additions.length)} valid readings.${invalid?' '+format(invalid)+' invalid row'+(invalid===1?' was':'s were')+' skipped.':''}${merged.duplicates?' '+format(merged.duplicates)+' overlapping reading'+(merged.duplicates===1?' was':'s were')+' resolved using revision dates.':''}`);
     $('storage-status').textContent=saved?'Saved on this browser. Your readings will return when you reopen this app.':'Could not save: browser storage is full or unavailable. This import is available in this tab only; keep your CSV. Any previously saved copy is unchanged.';
-  } catch(e){status(e.message,true);}finally{$('files').disabled=false;$('demo').disabled=false;$('files').value='';}
+  } catch(e){status(e.message,true);}finally{$('files').disabled=false;$('demo').disabled=false;$('drop-zone').removeAttribute('aria-busy');$('files').value='';}
 }
 function render() {
   const from=$('from').value,to=$('to').value;
@@ -103,7 +105,7 @@ function updateRhythm(){
   let from=$('from').value,to=$('to').value,source=records,description='Analysis period';
   const endOfMonth=m=>new Date(Date.UTC(Number(m.slice(0,4)),Number(m.slice(5,7)),0)).toISOString().slice(0,10);
   const validMonth=m=>/^\d{4}-(0[1-9]|1[0-2])$/.test(m);
-  function empty(message){$('profile').replaceChildren();$('rhythm-summary').textContent=message;}
+  function empty(message){$('profile').replaceChildren();$('rhythm-summary').textContent=message;$('profile-insight').textContent='';$('profile-detail').textContent='';}
   if(mode==='year'||mode==='season'){
     const year=$('rhythm-year').value;from=year+'-01-01';to=year+'-12-31';description=year;
     if(mode==='season'){
@@ -121,7 +123,7 @@ function updateRhythm(){
   const result=PowerData.analyze(source,{meter:$('meter').value,from,to,flow:$('flow').value});
   const hours=result.profile.flat().reduce((sum,c)=>sum+c.count,0);
   $('rhythm-summary').textContent=`${description} · ${from} – ${to} · ${format(hours)} complete hours · ${mode==='selected'?'Follows analysis period':'Applies only to this chart'}`;
-  if(!hours){$('profile').replaceChildren(node('p','rhythm-empty','No complete hourly readings for this period and energy type.'));return;}
+  if(!hours){$('profile').replaceChildren(node('p','rhythm-empty','No complete hourly readings for this period and energy type.'));$('profile-insight').textContent='';$('profile-detail').textContent='';return;}
   renderProfile(result);
 }
 function renderHeatmap(s){
@@ -132,20 +134,27 @@ function renderHeatmap(s){
   const labelColumn=node('col');labelColumn.style.width='83px';columns.append(labelColumn);
   for(let h=0;h<24;h++)columns.append(node('col'));
   table.append(columns);
-  const head=node('thead'),hr=node('tr');hr.append(node('th','',grouping==='month'?'Month':'Week of'));for(let h=0;h<24;h++)hr.append(node('th','',h%3===0?hourLabel(h):''));head.append(hr);table.append(head);
-  const values=s.groups.flatMap(([,cells])=>cells.filter(c=>c.count).map(c=>c.sum/c.count)),max=Math.max(...values,0.001);
+  const head=node('thead'),hr=node('tr');hr.append(node('th','',grouping==='month'?'Month':grouping==='week'?'Week of':'Date'));for(let h=0;h<24;h++)hr.append(node('th','',h%3===0?hourLabel(h):''));head.append(hr);table.append(head);
+  const values=s.groups.flatMap(([,cells])=>cells.filter(c=>c.count).map(c=>c.sum/c.count)),min=Math.min(...values,0),max=Math.max(...values,0.001);
+  $('heatmap-min').textContent=format(min,2)+' kWh';$('heatmap-max').textContent=format(max,2)+' kWh';
+  const peak=s.groups.flatMap(([key,cells])=>cells.map((cell,h)=>({key,cell,h,value:cell.count?cell.sum/cell.count:null})).filter(cell=>cell.value!==null)).sort((a,b)=>b.value-a.value)[0];
+  const groupName=key=>grouping==='month'?monthLabel(key):grouping==='week'?'week of '+key:key;
+  $('heatmap-insight').textContent=peak?`Highest average: ${groupName(peak.key)}, ${hourLabel(peak.h)}–${hourLabel((peak.h+1)%24)} (${format(peak.value,2)} kWh).`:'';
   const body=node('tbody');
-  for(const[key,cells]of s.groups){const tr=node('tr');const label=grouping==='month'?monthLabel(key):key.slice(5);const th=node('th','',label);th.scope='row';tr.append(th);
+  for(const[key,cells]of s.groups){const tr=node('tr');const label=grouping==='month'?monthLabel(key):grouping==='week'?key.slice(5):key;const th=node('th','',label);th.scope='row';tr.append(th);
     cells.forEach((c,h)=>{const td=node('td'),b=node('button','heat-cell'+(c.count?'':' missing'));const v=c.count?c.sum/c.count:null;
-      const detail=`${grouping==='month'?monthLabel(key):'Week of '+key} · ${hourLabel(h)}–${hourLabel((h+1)%24)} · ${v===null?'No complete hours':format(v,2)+' kWh average · '+c.count+' complete hours'}`;
-      b.title=detail;b.setAttribute('aria-label',detail);if(v!==null){const ratio=v/max;b.style.backgroundColor=`rgb(${Math.round(237-204*ratio)},${Math.round(243-170*ratio)},${Math.round(255-102*ratio)})`;}
-      b.addEventListener('click',()=>{$('cell-detail').textContent=detail;});b.addEventListener('focus',()=>{$('cell-detail').textContent=detail;});td.append(b);tr.append(td);});body.append(tr);
+      const detail=`${groupName(key)} · ${hourLabel(h)}–${hourLabel((h+1)%24)} · ${v===null?'No complete hours':format(v,2)+' kWh average · '+c.count+' complete hours'}`;
+      b.title=detail;b.setAttribute('aria-label',detail);b.dataset.row=s.groups.findIndex(([groupKey])=>groupKey===key);b.dataset.hour=h;b.tabIndex=-1;if(v!==null){const ratio=v/max;b.style.backgroundColor=`rgb(${Math.round(237-204*ratio)},${Math.round(243-170*ratio)},${Math.round(255-102*ratio)})`;}
+      const select=()=>{for(const cell of table.querySelectorAll('.heat-cell')){if(cell===b)cell.setAttribute('aria-current','true');else cell.removeAttribute('aria-current');}$('cell-detail').textContent=detail;};
+      b.addEventListener('click',select);b.addEventListener('focus',select);b.addEventListener('keydown',event=>{const row=Number(b.dataset.row),hour=Number(b.dataset.hour);let nextRow=row,nextHour=hour;if(event.key==='ArrowLeft')nextHour=Math.max(0,hour-1);else if(event.key==='ArrowRight')nextHour=Math.min(23,hour+1);else if(event.key==='ArrowUp')nextRow=Math.max(0,row-1);else if(event.key==='ArrowDown')nextRow=Math.min(s.groups.length-1,row+1);else if(event.key==='Home')nextHour=0;else if(event.key==='End')nextHour=23;else return;event.preventDefault();const next=table.querySelector(`.heat-cell[data-row="${nextRow}"][data-hour="${nextHour}"]`);if(next)next.focus();});td.append(b);tr.append(td);});body.append(tr);
   }
-  table.append(body);$('heatmap').replaceChildren(table);$('cell-detail').textContent='Select a cell to explore an hour.';
+  table.append(body);$('heatmap').replaceChildren(table);const initial=peak&&table.querySelector(`.heat-cell[data-row="${s.groups.findIndex(([key])=>key===peak.key)}"][data-hour="${peak.h}"]`);if(initial){initial.tabIndex=0;initial.click();}else $('cell-detail').textContent='No complete hourly readings in this period.';
 }
 function renderMonthly(s){
   const chart=node('div','bar-chart'),detail=node('p','bar-detail','Striped bars indicate missing readings in the selected range.');detail.setAttribute('aria-live','polite');
   const max=Math.max(...s.months.map(m=>m.total),1);
+  const peak=s.months.filter(m=>m.count).sort((a,b)=>b.total-a.total)[0];
+  $('monthly-insight').textContent=peak?`Highest recorded month: ${monthLabel(peak.key)} (${format(peak.total)} kWh${peak.count<peak.expected?', partial data':''}).`:'No readings in this period.';
   for(const m of s.months){const col=node('div','bar-column'),partial=m.count<m.expected;col.append(node('span','bar-value',m.count?format(m.total):'—'));const bar=node('button','bar'+(!m.count?' no-data':partial?' partial':''));bar.style.height=`${m.total/max*145+2}px`;const text=`${monthLabel(m.key)}: ${m.count?format(m.total,2)+' kWh':'No readings'} · ${format(m.count)} of ${format(m.expected)} selected-range readings${partial?' (incomplete)':''}`;bar.title=text;bar.setAttribute('aria-label',text);bar.onclick=()=>{detail.textContent=text;};bar.onfocus=bar.onclick;col.append(bar,node('span','bar-label',monthLabel(m.key)));chart.append(col);}
   $('monthly').replaceChildren(chart,detail);
 }
@@ -153,10 +162,12 @@ function renderProfile(s){
   const NS='http://www.w3.org/2000/svg';const svg=document.createElementNS(NS,'svg');svg.setAttribute('viewBox','0 0 500 220');svg.classList.add('profile-svg');svg.setAttribute('role','img');svg.setAttribute('aria-label','Average hourly energy: blue weekdays, amber weekends. Missing hours have gaps.');
   function el(tag,attrs,text){const e=document.createElementNS(NS,tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(text)e.textContent=text;svg.append(e);return e;}
   const max=Math.max(...s.profile.flat().filter(c=>c.count).map(c=>c.sum/c.count),1)*1.15;
+  const peak=s.profile.flatMap((series,seriesIndex)=>series.map((cell,h)=>({cell,h,seriesIndex,value:cell.count?cell.sum/cell.count:null})).filter(point=>point.value!==null)).sort((a,b)=>b.value-a.value)[0];
+  $('profile-insight').textContent=peak?`Highest average: ${peak.seriesIndex?'weekends':'weekdays'} at ${hourLabel(peak.h)} (${format(peak.value,2)} kWh).`:'';
   for(let i=0;i<=4;i++){const y=180-i*40;el('line',{x1:38,x2:484,y1:y,y2:y,stroke:'#e5eaf4','stroke-dasharray':'3 4'});el('text',{x:28,y:y+4,'text-anchor':'end',fill:'#71819b','font-size':11},format(max*i/4,1));}
   for(let h=0;h<24;h+=6)el('text',{x:38+h/23*446,y:205,fill:'#71819b','font-size':11},hourLabel(h));el('text',{x:462,y:205,fill:'#71819b','font-size':11},'11pm');
-  s.profile.forEach((series,i)=>{let path='',previous=false;for(let h=0;h<24;h++){const c=series[h];if(!c.count){previous=false;continue;}const x=38+h/23*446,y=180-c.sum/c.count/max*160;path+=`${previous?'L':'M'}${x},${y} `;previous=true;const dot=el('circle',{cx:x,cy:y,r:3,fill:i?'#cd8b2b':'#3568c5',tabindex:0});const title=document.createElementNS(NS,'title');title.textContent=`${i?'Weekend':'Weekday'} ${hourLabel(h)}: ${format(c.sum/c.count,2)} kWh (${c.count} hours)`;dot.append(title);}el('path',{d:path,fill:'none',stroke:i?'#cd8b2b':'#3568c5','stroke-width':2.5,'stroke-linejoin':'round'});});
-  $('profile').replaceChildren(svg);
+  s.profile.forEach((series,i)=>{let path='',previous=false;for(let h=0;h<24;h++){const c=series[h];if(!c.count){previous=false;continue;}const x=38+h/23*446,y=180-c.sum/c.count/max*160;path+=`${previous?'L':'M'}${x},${y} `;previous=true;const detail=`${i?'Weekend':'Weekday'} · ${hourLabel(h)} · ${format(c.sum/c.count,2)} kWh average across ${c.count} complete hours`;const dot=el('circle',{cx:x,cy:y,r:4,fill:i?'#cd8b2b':'#3568c5',tabindex:0,role:'button','aria-label':detail});const title=document.createElementNS(NS,'title');title.textContent=detail;dot.append(title);dot.addEventListener('click',()=>{$('profile-detail').textContent=detail;});dot.addEventListener('focus',()=>{$('profile-detail').textContent=detail;});}el('path',{d:path,fill:'none',stroke:i?'#cd8b2b':'#3568c5','stroke-width':2.5,'stroke-linejoin':'round'});});
+  $('profile').replaceChildren(svg);$('profile-detail').textContent=peak?`${peak.seriesIndex?'Weekend':'Weekday'} · ${hourLabel(peak.h)} · ${format(peak.value,2)} kWh average`:'Select a point to explore an hour.';
 }
 $('files').onchange=e=>importFiles([...e.target.files]);
 for(const type of ['dragover','dragleave','drop'])$('drop-zone').addEventListener(type,e=>{e.preventDefault();$('drop-zone').classList.toggle('dragging',type==='dragover');if(type==='drop'&&!$('files').disabled)importFiles([...e.dataTransfer.files]);});
@@ -165,7 +176,7 @@ $('clear').onclick=()=>{if(!confirm('Delete all saved usage from this browser? K
 $('meter').onchange=()=>{bounds();setupRhythm();render();syncWorkspace();};for(const id of ['from','to','flow'])$(id).onchange=render;
 for(const id of ['rhythm-period','rhythm-year','rhythm-start','rhythm-end','rhythm-month','rhythm-seasons'])$(id).addEventListener('change',updateRhythm);
 $('last-year').onclick=()=>{bounds();render();};$('all-dates').onclick=()=>{bounds(false);render();};
-for(const[id,g]of [['months','month'],['weeks','week']])$(id).onclick=()=>{grouping=g;$('months').setAttribute('aria-pressed',g==='month');$('weeks').setAttribute('aria-pressed',g==='week');render();};
+for(const[id,g]of [['months','month'],['weeks','week'],['days','day']])$(id).onclick=()=>{grouping=g;$('months').setAttribute('aria-pressed',g==='month');$('weeks').setAttribute('aria-pressed',g==='week');$('days').setAttribute('aria-pressed',g==='day');render();};
 $('guide-button').onclick=()=>$('guide').showModal();$('close-guide').onclick=()=>$('guide').close();$('guide').addEventListener('click',e=>{if(e.target===$('guide')){const r=$('guide').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('guide').close();}});
 $('export').onclick=()=>{if(!current)return;const text='MONTH,ENERGY_TYPE,KWH,READINGS,EXPECTED_READINGS_IN_SELECTED_RANGE\r\n'+current.months.map(m=>`${m.key},${$('flow').value},${m.total.toFixed(3)},${m.count},${m.expected}`).join('\r\n');const url=URL.createObjectURL(new Blob([text],{type:'text/csv'}));const a=node('a');a.href=url;a.download='current-monthly-usage.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 PowerPlansUI.init();

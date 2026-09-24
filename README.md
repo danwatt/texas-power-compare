@@ -6,7 +6,7 @@ A dependency-free, browser-only Smart Meter Texas CSV explorer. No backend, exte
 
 Download the project and open `index.html` in a modern browser. Keep `index.html`, `styles.css`, `data.js`, `storage.js`, `plans.js`, `plan-ui.js`, and `app.js` together. No installation or server is needed. Accessing Smart Meter Texas and its linked guide requires internet access; analysis does not. A previously visited hosted page is not guaranteed to reopen offline: download the files for reliable offline use.
 
-Choose one or multiple 15-minute CSV reports, or try the clearly labeled synthetic demo year. Later imports add to the current data, replacing older revisions of overlapping readings. Imports replace demo data. Select a meter, date range, and grid consumption or solar exports. Switch the heatmap between months and Sunday-based weeks. Select or focus chart cells/bars to see values; monthly summaries can be exported as CSV.
+Choose one or multiple 15-minute CSV reports, or try the clearly labeled synthetic demo year. Later imports add to the current data, replacing older revisions of overlapping readings. Imports replace demo data. Select a meter, date range, and grid consumption or solar exports. Switch the heatmap between months, Sunday-based weeks, and individual days. Select or focus chart cells/bars to see values; monthly summaries can be exported as CSV.
 
 ## GitHub Pages
 

@@ -55,7 +55,7 @@
     const selected = records.filter(r => r.meter === meter && r.day >= from && r.day <= to && r.flow === flow);
     const months = new Map(), days = new Map(), hours = new Map(), groups = new Map();
     for (let d = new Date(from + 'T00:00:00Z'), end = new Date(to + 'T00:00:00Z'); d <= end; d = new Date(+d + DAY)) {
-      const key = d.toISOString().slice(0,10), month = key.slice(0,7), group = grouping === 'month' ? month : week(key);
+      const key = d.toISOString().slice(0,10), month = key.slice(0,7), group = grouping === 'month' ? month : grouping === 'week' ? week(key) : key;
       if (!months.has(month)) months.set(month, {key: month, total: 0, count: 0, expected: 0});
       months.get(month).expected += 96;
       if (!groups.has(group)) groups.set(group, Array.from({length:24}, () => ({sum:0, count:0})));
@@ -69,7 +69,7 @@
     }
     const profile = [0,1].map(() => Array.from({length:24}, () => ({sum:0,count:0})));
     for (const h of hours.values()) if (h.count === 4) {
-      const key = grouping === 'month' ? h.day.slice(0,7) : week(h.day), cell = groups.get(key)[h.hour]; cell.sum += h.total; cell.count++;
+      const key = grouping === 'month' ? h.day.slice(0,7) : grouping === 'week' ? week(h.day) : h.day, cell = groups.get(key)[h.hour]; cell.sum += h.total; cell.count++;
       const dow = new Date(h.day + 'T00:00:00Z').getUTCDay(), p = profile[dow === 0 || dow === 6 ? 1 : 0][h.hour]; p.sum += h.total; p.count++;
     }
     const complete = [...days.values()].filter(d => d.count === 96);
